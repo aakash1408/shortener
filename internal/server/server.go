@@ -9,6 +9,8 @@ import (
 
 	"github.com/aakash1408/shortener/internal/config"
 	"github.com/aakash1408/shortener/internal/store"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 //go:embed static/index.html
@@ -33,13 +35,16 @@ func New(cfg config.Config, st store.Store, logger *slog.Logger) *server {
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.Port),
-		Handler: mux,
+		Handler: otelhttp.NewHandler(metricsMiddleware(s.requestLoggerMiddleware(mux)), "http.server"),
 	}
 
 	return s
 }
 
 func (s *server) registerRoutes(mux *http.ServeMux) {
+	// metrics — no auth, no logging
+	mux.Handle("GET /metrics", promhttp.Handler())
+
 	// homepage
 	mux.HandleFunc("GET /", s.handleIndex)
 

@@ -12,6 +12,7 @@ import (
 	"github.com/aakash1408/shortener/internal/config"
 	"github.com/aakash1408/shortener/internal/server"
 	"github.com/aakash1408/shortener/internal/store"
+	"github.com/aakash1408/shortener/internal/tracing"
 )
 
 func main() {
@@ -31,8 +32,22 @@ func run() int {
 		Level: parseLogLevel(cfg.LogLevel),
 	}))
 
-	// 3. connect to database
 	ctx := context.Background()
+
+	// 3. init tracing
+	jaegerEndpoint := os.Getenv("JAEGER_ENDPOINT")
+	if jaegerEndpoint == "" {
+		jaegerEndpoint = "localhost:4317"
+	}
+	shutdownTracing, err := tracing.Init(ctx, "shortener", jaegerEndpoint)
+	if err != nil {
+		logger.Error("failed to init tracing", "error", err)
+		return 1
+	}
+	defer shutdownTracing(context.Background())
+	logger.Info("tracing initialized")
+
+	// 4. connect to database
 	st, err := store.New(ctx, cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("failed to connect to database", "error", err)
@@ -40,27 +55,27 @@ func run() int {
 	}
 	logger.Info("connected to database")
 
-	// 4. run migrations
+	// 5. run migrations
 	if err := st.RunMigrations(ctx); err != nil {
 		logger.Error("failed to run migrations", "error", err)
 		return 1
 	}
 	logger.Info("migrations complete")
 
-	// 5. create server
+	// 6. create server
 	srv := server.New(cfg, st, logger)
 
-	// 6. listen for Ctrl+C or SIGTERM
+	// 7. listen for Ctrl+C or SIGTERM
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// 7. start server in goroutine
+	// 8. start server in goroutine
 	serverErr := make(chan error, 1)
 	go func() {
 		serverErr <- srv.Start()
 	}()
 
-	// 8. wait for interrupt or server error
+	// 9. wait for interrupt or server error
 	select {
 	case <-sigCtx.Done():
 		logger.Info("shutting down...")
